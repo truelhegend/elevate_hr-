@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "667636371856",
+    "project_id": "elevate-hr",
+    "storage_bucket": "elevate-hr.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:667636371856:android:15955a92c599601e85a315",
+        "android_client_info": {
+          "package_name": "com.elevatehr.elevate_hr"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWAoFCc_Mi-ZsuXgf6_V8UA8UC9kHTiDg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
