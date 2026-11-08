@@ -1,10 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const { query } = require('../db');
 const { success } = require('../utils/responses');
 
+// Company-wide analytics are management data, not employee data.
 router.use(authenticate);
+router.use(authorize('ADMIN', 'MANAGER', 'CEO'));
 
 router.get('/dashboard', (req, res) => {
   const employees = query('users', u => u.role === 'EMPLOYEE' || u.role === 'MANAGER');

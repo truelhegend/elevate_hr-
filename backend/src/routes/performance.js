@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const { query, formatPerformance } = require('../db');
 const { success } = require('../utils/responses');
 
@@ -19,7 +19,7 @@ router.get('/my-history', (req, res) => {
   success(res, records.map(r => ({ month: r.month, year: r.year, overallScore: r.overallScore })));
 });
 
-router.get('/team', (req, res) => {
+router.get('/team', authorize('ADMIN', 'MANAGER', 'CEO'), (req, res) => {
   const now = new Date();
   const employees = query('users', u => u.role === 'EMPLOYEE' || u.role === 'MANAGER');
   const records = query('performance', p => p.month === now.getMonth() + 1 && p.year === now.getFullYear());
@@ -31,7 +31,7 @@ router.get('/team', (req, res) => {
   success(res, result);
 });
 
-router.get('/department/:department', (req, res) => {
+router.get('/department/:department', authorize('ADMIN', 'MANAGER', 'CEO'), (req, res) => {
   const now = new Date();
   const employees = query('users', u => u.department === req.params.department);
   const records = query('performance', p => p.month === now.getMonth() + 1 && p.year === now.getFullYear() && employees.some(e => e.id === p.userId));
@@ -39,7 +39,7 @@ router.get('/department/:department', (req, res) => {
   success(res, { department: req.params.department, averageScore: Math.round(avgScore), employeeCount: employees.length });
 });
 
-router.get('/company', (req, res) => {
+router.get('/company', authorize('ADMIN', 'MANAGER', 'CEO'), (req, res) => {
   const now = new Date();
   const records = query('performance', p => p.month === now.getMonth() + 1 && p.year === now.getFullYear());
   const avgScore = records.length > 0 ? records.reduce((s, r) => s + r.overallScore, 0) / records.length : 0;

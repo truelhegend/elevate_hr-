@@ -1,19 +1,52 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const { generateTokens, authenticate, refreshAccessToken } = require('../middleware/auth');
-const { findOne, formatUser } = require('../db');
+const {
+  generateTokens,
+  authenticate,
+  refreshAccessToken,
+  generateBiometricSecret,
+  safeEqual,
+  loginRateLimit,
+  clearLoginAttempts,
+} = require('../middleware/auth');
+const { findOne, update, formatUser } = require('../db');
 const { success, error } = require('../utils/responses');
 
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+// Biometric secrets are per-device bearer credentials. Legacy records stored the
+// user id as the secret, which made every account trivially takeable-over.
+function ensureBiometricSecret(user) {
+  const secret = user.biometricSecret;
+  const isLegacy = !secret || secret === user.id;
+  if (!isLegacy) return secret;
+  const fresh = generateBiometricSecret();
+  update('users', u => u.id === user.id, { biometricSecret: fresh });
+  return fresh;
+}
+
+router.post('/login', loginRateLimit, async (req, res) => {
+  const { password } = req.body;
+  const email = normalizeEmail(req.body.email);
   if (!email || !password) return error(res, 'Email and password are required', 400);
-  const user = findOne('users', u => u.email === email);
+
+  const user = findOne('users', u => normalizeEmail(u.email) === email);
   if (!user) return error(res, 'Invalid email or password', 401);
-  const valid = await bcrypt.compare(password, user.password);
+
+  const valid = await bcrypt.compare(String(password), user.password);
   if (!valid) return error(res, 'Invalid email or password', 401);
+
+  clearLoginAttempts(req);
   const tokens = generateTokens(user.id);
-  success(res, { ...tokens, user: formatUser(user) });
+  success(res, {
+    ...tokens,
+    user: formatUser(user),
+    // Returned once at password login so the client can enroll biometric login.
+    biometricSecret: ensureBiometricSecret(user),
+  });
 });
 
 router.post('/google', (req, res) => {
@@ -21,17 +54,21 @@ router.post('/google', (req, res) => {
   if (!idToken) return error(res, 'Google ID token is required', 400);
 
   // TODO: Verify idToken with Google's OAuth2 API using google-auth-library
-  // For now, return an error indicating this endpoint requires proper implementation
   return error(res, 'Google OAuth is not yet fully implemented. Please use email/password login.', 501);
 });
 
 router.post('/biometric-login', (req, res) => {
-  const { biometricSecret, userId } = req.body;
-  if (!biometricSecret || !userId) return error(res, 'Biometric secret and userId are required', 400);
-  const user = findOne('users', u => u.id === userId && u.biometricSecret === biometricSecret);
-  if (!user) return error(res, 'Invalid biometric credentials', 401);
+  const { userId, biometricSecret } = req.body;
+  if (!userId || !biometricSecret) return error(res, 'userId and biometricSecret are required', 400);
+  const user = findOne('users', u => u.id === userId);
+  if (!user || !user.biometricSecret || user.biometricSecret === user.id) {
+    return error(res, 'Invalid biometric credentials', 401);
+  }
+  if (!safeEqual(biometricSecret, user.biometricSecret)) {
+    return error(res, 'Invalid biometric credentials', 401);
+  }
   const tokens = generateTokens(user.id);
-  success(res, { ...tokens, user: formatUser(user) });
+  success(res, { ...tokens, user: formatUser(user), biometricSecret: user.biometricSecret });
 });
 
 router.post('/refresh', (req, res) => {

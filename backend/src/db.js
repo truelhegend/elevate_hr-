@@ -3,18 +3,31 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { countWorkingDays } = require('./utils/dates');
 
 const DB_PATH = path.join(__dirname, '..', 'db.json');
 
 let store = { users: [], attendance: [], leave_requests: [], leave_approvals: [], leave_balances: [], notifications: [], performance: [] };
 
-function save() { fs.writeFileSync(DB_PATH, JSON.stringify(store, null, 2)); }
+// Write to a temp file then rename so a crash mid-write cannot corrupt db.json.
+function save() {
+  const tmpPath = `${DB_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(store, null, 2));
+  fs.renameSync(tmpPath, DB_PATH);
+}
+
 function load() {
-  if (fs.existsSync(DB_PATH)) {
+  if (!fs.existsSync(DB_PATH)) return false;
+  try {
     store = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
     return true;
+  } catch (err) {
+    const quarantine = `${DB_PATH}.corrupt-${Date.now()}`;
+    fs.renameSync(DB_PATH, quarantine);
+    console.error(`db.json could not be parsed (${err.message}); moved to ${quarantine} and reseeding.`);
+    store = { users: [], attendance: [], leave_requests: [], leave_approvals: [], leave_balances: [], notifications: [], performance: [] };
+    return false;
   }
-  return false;
 }
 
 function query(table, filter = () => true) { return (store[table] || []).filter(filter); }
@@ -26,6 +39,12 @@ function update(table, filter, updates) {
   return null;
 }
 function count(table, filter = () => true) { return (store[table] || []).filter(filter).length; }
+
+function isoAt(date, hours, minutes) {
+  const d = new Date(date);
+  d.setUTCHours(hours, minutes, 0, 0);
+  return d.toISOString();
+}
 
 function initDatabase() {
   if (load()) return;
@@ -48,21 +67,30 @@ function initDatabase() {
   const now = new Date();
 
   for (const u of users) {
-    insert('users', { ...u, biometricSecret: u.id, avatarUrl: null });
+    insert('users', { ...u, biometricSecret: crypto.randomBytes(32).toString('hex'), avatarUrl: null });
 
-    for (const lt of [{ type: 'Annual', total: 15, used: Math.floor(Math.random() * 5) }, { type: 'Sick', total: 10, used: Math.floor(Math.random() * 3) }, { type: 'Personal', total: 5, used: Math.floor(Math.random() * 2) }]) {
+    for (const lt of [
+      { type: 'Annual', total: 15, used: Math.floor(Math.random() * 5) },
+      { type: 'Sick', total: 10, used: Math.floor(Math.random() * 3) },
+      { type: 'Personal', total: 5, used: Math.floor(Math.random() * 2) },
+      { type: 'Emergency', total: 5, used: 0 },
+    ]) {
       insert('leave_balances', { id: uuid(), userId: u.id, leaveType: lt.type, totalDays: lt.total, usedDays: lt.used, year: 2026 });
     }
 
     for (let d = -29; d <= 0; d++) {
-      const date = new Date(now); date.setDate(date.getDate() + d);
-      if (date.getDay() === 0 || date.getDay() === 6) continue;
+      const date = new Date(now); date.setUTCDate(date.getUTCDate() + d);
+      if (date.getUTCDay() === 0 || date.getUTCDay() === 6) continue;
       const status = ['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'LATE'][Math.floor(Math.random() * 5)];
+      const inHour = 8 + Math.floor(Math.random() * 2);
+      const inMinute = Math.floor(Math.random() * 60);
+      const outHour = 17 + Math.floor(Math.random() * 2);
+      const outMinute = Math.floor(Math.random() * 60);
       insert('attendance', {
         id: uuid(), userId: u.id, date: date.toISOString().split('T')[0],
-        clockIn: `0${8 + Math.floor(Math.random() * 2)}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}:00`,
-        clockOut: `${17 + Math.floor(Math.random() * 2)}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}:00`,
-        status, location: null, workHours: 8 + Math.random(), notes: null,
+        clockIn: isoAt(date, inHour, inMinute),
+        clockOut: isoAt(date, outHour, outMinute),
+        status, location: null, workHours: Math.round((outHour + outMinute / 60 - (inHour + inMinute / 60)) * 100) / 100, notes: null,
       });
     }
 
@@ -80,17 +108,28 @@ function initDatabase() {
   const emp6 = users[5].id;
   const emp7 = users[6].id;
 
-  const lr1 = { id: uuid(), userId: emp5, leaveType: 'Annual', startDate: '2026-07-25', endDate: '2026-07-27', reason: 'Family vacation', documentUrl: null, status: 'PENDING', totalDays: 3, createdAt: now.toISOString() };
-  insert('leave_requests', lr1);
-  insert('leave_approvals', { id: uuid(), leaveRequestId: lr1.id, approverId: managerId, status: 'PENDING', comment: null, createdAt: now.toISOString() });
+  const seededRequests = [
+    { userId: emp5, leaveType: 'Annual', startDate: '2026-07-25', endDate: '2026-07-27', reason: 'Family vacation', status: 'PENDING', approverId: managerId, createdAt: now.toISOString() },
+    { userId: emp6, leaveType: 'Sick', startDate: '2026-07-20', endDate: '2026-07-21', reason: 'Feeling unwell', status: 'APPROVED', approverId: managerId, createdAt: new Date(now - 86400000 * 3).toISOString() },
+    { userId: emp7, leaveType: 'Personal', startDate: '2026-08-01', endDate: '2026-08-01', reason: 'Personal appointment', status: 'PENDING', approverId: users[2].id, createdAt: now.toISOString() },
+  ];
 
-  const lr2 = { id: uuid(), userId: emp6, leaveType: 'Sick', startDate: '2026-07-20', endDate: '2026-07-21', reason: 'Feeling unwell', documentUrl: null, status: 'APPROVED', totalDays: 2, createdAt: new Date(now - 86400000 * 3).toISOString() };
-  insert('leave_requests', lr2);
-  insert('leave_approvals', { id: uuid(), leaveRequestId: lr2.id, approverId: managerId, status: 'APPROVED', comment: 'Get well soon', createdAt: new Date(now - 86400000 * 2).toISOString() });
-
-  const lr3 = { id: uuid(), userId: emp7, leaveType: 'Personal', startDate: '2026-08-01', endDate: '2026-08-01', reason: 'Personal appointment', documentUrl: null, status: 'PENDING', totalDays: 1, createdAt: now.toISOString() };
-  insert('leave_requests', lr3);
-  insert('leave_approvals', { id: uuid(), leaveRequestId: lr3.id, approverId: users[2].id, status: 'PENDING', comment: null, createdAt: now.toISOString() });
+  for (const req of seededRequests) {
+    const lr = {
+      id: uuid(), userId: req.userId, leaveType: req.leaveType,
+      startDate: req.startDate, endDate: req.endDate, reason: req.reason,
+      documentUrl: null, status: req.status,
+      totalDays: countWorkingDays(req.startDate, req.endDate),
+      createdAt: req.createdAt,
+    };
+    insert('leave_requests', lr);
+    insert('leave_approvals', {
+      id: uuid(), leaveRequestId: lr.id, approverId: req.approverId,
+      status: req.status === 'APPROVED' ? 'APPROVED' : 'PENDING',
+      comment: req.status === 'APPROVED' ? 'Get well soon' : null,
+      createdAt: req.createdAt,
+    });
+  }
 
   save();
 }
@@ -107,8 +146,8 @@ function formatLeaveRequest(lr) {
     const approver = findOne('users', u => u.id === a.approverId);
     return { id: a.id, approverId: a.approverId, approver: approver ? { firstName: approver.firstName, lastName: approver.lastName } : null, status: a.status, comment: a.comment, createdAt: a.createdAt };
   });
-  const last = approvals.length > 0 ? approvals[approvals.length - 1] : null;
-  return { id: lr.id, employeeId: lr.userId, employee: emp ? { firstName: emp.firstName, lastName: emp.lastName } : null, leaveType: lr.leaveType, startDate: lr.startDate, endDate: lr.endDate, reason: lr.reason, documentUrl: lr.documentUrl, status: lr.status, createdAt: lr.createdAt, totalDays: lr.totalDays, reviewerComment: last?.comment || null, reviewedAt: last?.createdAt || null, approvals };
+  const decided = [...approvals].reverse().find(a => a.status === 'APPROVED' || a.status === 'REJECTED');
+  return { id: lr.id, employeeId: lr.userId, employee: emp ? { firstName: emp.firstName, lastName: emp.lastName } : null, leaveType: lr.leaveType, startDate: lr.startDate, endDate: lr.endDate, reason: lr.reason, documentUrl: lr.documentUrl, status: lr.status, createdAt: lr.createdAt, totalDays: lr.totalDays, reviewerComment: decided ? decided.comment : null, reviewedAt: decided ? decided.createdAt : null, approvals };
 }
 
 function formatAttendance(a) {
@@ -132,4 +171,4 @@ function formatLeaveBalance(lb) {
   return { type: lb.leaveType, totalDays: lb.totalDays, usedDays: lb.usedDays, remainingDays: lb.totalDays - lb.usedDays };
 }
 
-module.exports = { initDatabase, query, findOne, insert, update, count, formatUser, formatLeaveRequest, formatAttendance, formatNotification, formatPerformance, formatLeaveBalance };
+module.exports = { DB_PATH, initDatabase, query, findOne, insert, update, count, formatUser, formatLeaveRequest, formatAttendance, formatNotification, formatPerformance, formatLeaveBalance };
