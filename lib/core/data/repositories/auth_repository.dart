@@ -30,6 +30,10 @@ class AuthRepository {
 
     final user = User.fromJson(data['user']);
     await storage.saveUser(user);
+    final biometricSecret = data['biometricSecret'];
+    if (biometricSecret is String && biometricSecret.isNotEmpty) {
+      await storage.saveBiometricSecret(biometricSecret);
+    }
     _currentUser = user;
     _isAuthenticated = true;
     return user;
@@ -49,8 +53,14 @@ class AuthRepository {
     final storedUser = storage.currentUser;
     if (storedUser == null) throw Exception('No stored user for biometric login');
 
+    final secret = await storage.biometricSecret;
+    if (secret == null || secret.isEmpty) {
+      throw Exception('Biometric login is not set up. Sign in with your password first.');
+    }
+
     final response = await api.post('/auth/biometric-login', data: {
-      'biometricSecret': storedUser.id,
+      'userId': storedUser.id,
+      'biometricSecret': secret,
     });
 
     final data = response.data['data'];

@@ -31,12 +31,12 @@ class PerformanceRepository {
   }
 
   Future<Map<String, dynamic>> getDepartmentPerformance(String departmentId) async {
-    final response = await api.get('/performance/department/$departmentId');
+    final response = await api.get('/performance/department/${Uri.encodeComponent(departmentId)}');
     return response.data['data'] ?? {};
   }
 
-  Future<Map<String, dynamic>> getCompanyPerformance(String companyId) async {
-    final response = await api.get('/performance/company/$companyId');
+  Future<Map<String, dynamic>> getCompanyPerformance([String? companyId]) async {
+    final response = await api.get('/performance/company');
     return response.data['data'] ?? {};
   }
 }

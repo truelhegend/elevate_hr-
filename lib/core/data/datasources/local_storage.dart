@@ -9,6 +9,7 @@ class LocalStorage {
 
   static const String _onboardingKey = 'onboarding_complete';
   static const String _userKey = 'current_user';
+  static const String _biometricSecretKey = 'biometric_secret';
 
   LocalStorage(this._prefs, this._secureStorage);
 
@@ -35,7 +36,14 @@ class LocalStorage {
 
   Future<void> clearUser() async {
     await _prefs.remove(_userKey);
+    await _secureStorage.delete(key: _biometricSecretKey);
   }
+
+  // Biometric enrollment secret, issued by the server at password login.
+  Future<void> saveBiometricSecret(String secret) =>
+      _secureStorage.write(key: _biometricSecretKey, value: secret);
+
+  Future<String?> get biometricSecret => _secureStorage.read(key: _biometricSecretKey);
 
   // Clear all
   Future<void> clearAll() async {
